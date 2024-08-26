@@ -1,0 +1,130 @@
+-- Safety confirmation to avoid accidental execution
+DECLARE @Confirm INT = 1; -- Set this to 1 to enable the script to run
+
+SET NOCOUNT ON 
+-- Filtering options
+DECLARE @TargetLogin NVARCHAR(128) = N'ACCOUNTING';       -- Specify a login to target, leave blank for all logins
+DECLARE @ExcludeLogin NVARCHAR(128) = N'';      -- Specify a login to exclude, leave blank to include all
+DECLARE @TargetDatabase NVARCHAR(128) = N'';    -- Specify a database to target, leave blank for all databases
+DECLARE @SessionState CHAR(1) = '';             -- Specify 'S' for sleeping, 'R' for running, leave blank for all states
+DECLARE @OpenTransaction CHAR(1) = '';          -- Specify 'Y' to target sessions with open transactions, leave blank otherwise
+DECLARE @MinRequestAge INT = 0;                 -- Specify the minimum age (in minutes) of the request, 0 for any age
+
+-- Get current session ID to avoid killing the current session
+DECLARE @CurrentSPID INT = @@SPID;
+
+-- Table to store the session details to be processed
+DECLARE @Sessions TABLE (
+    spid INT,
+    loginname NVARCHAR(128),
+    dbname NVARCHAR(128),
+    status NVARCHAR(60)
+);
+
+-- Table to log killed sessions
+DECLARE @KilledSessions TABLE (
+    spid INT,
+    loginname NVARCHAR(128),
+    dbname NVARCHAR(128),
+    status NVARCHAR(60),
+    kill_time DATETIME
+);
+
+-- Verify confirmation flag
+IF @Confirm = 0
+BEGIN
+    PRINT 'Set @Confirm to 1 to run this script.';
+    RETURN;
+END
+
+-- Building the query dynamically based on filters
+DECLARE @Query NVARCHAR(MAX);
+SET @Query = N'SELECT spid, loginame, db_name(dbid) AS dbname, status 
+               FROM sys.sysprocesses 
+               WHERE spid > 50 
+               AND spid <> ' + CAST(@CurrentSPID AS NVARCHAR) + '';  -- Exclude system processes and the current session
+
+IF @TargetLogin <> N''
+    SET @Query = @Query + ' AND loginame = ''' + @TargetLogin + '''';
+
+IF @ExcludeLogin <> N''
+    SET @Query = @Query + ' AND loginame <> ''' + @ExcludeLogin + '''';
+
+IF @TargetDatabase <> N''
+    SET @Query = @Query + ' AND db_name(dbid) = ''' + @TargetDatabase + '''';
+
+IF @SessionState = 'S'
+    SET @Query = @Query + ' AND status = ''sleeping''';
+ELSE IF @SessionState = 'R'
+    SET @Query = @Query + ' AND status = ''running''';
+
+IF @OpenTransaction = 'Y'
+    SET @Query = @Query + ' AND open_tran > 0';
+
+IF @MinRequestAge > 0
+    SET @Query = @Query + ' AND DATEDIFF(MINUTE, last_batch, GETDATE()) >= ' + CAST(@MinRequestAge AS NVARCHAR);
+
+-- Ensure the query only runs if there are specific filters
+IF @TargetLogin = N'' AND @ExcludeLogin = N'' AND @TargetDatabase = N'' AND @SessionState = '' AND @OpenTransaction = '' AND @MinRequestAge = 0
+BEGIN
+    PRINT 'No specific parameters were supplied. The script will not kill any sessions.';
+    RETURN;
+END
+
+-- Insert session details into the @Sessions table
+INSERT INTO @Sessions (spid, loginname, dbname, status)
+EXEC sp_executesql @Query;
+
+-- Check if any sessions matched the criteria
+IF (SELECT COUNT(*) FROM @Sessions) = 0
+BEGIN
+    PRINT 'No sessions matched the supplied criteria. No sessions were killed.';
+    RETURN;
+END
+
+-- Begin processing
+DECLARE @SPID INT;
+DECLARE @LoginName NVARCHAR(128);
+DECLARE @DBName NVARCHAR(128);
+DECLARE @Status NVARCHAR(60);
+DECLARE @UserInput NVARCHAR(10);
+
+DECLARE SessionCursor CURSOR FOR SELECT spid, loginname, dbname, status FROM @Sessions;
+OPEN SessionCursor;
+FETCH NEXT FROM SessionCursor INTO @SPID, @LoginName, @DBName, @Status;
+
+WHILE @@FETCH_STATUS = 0
+BEGIN
+    PRINT 'Do you want to kill session with SPID = ' + CAST(@SPID AS NVARCHAR(10)) + ', Login = ' + @LoginName + ', Database = ' + @DBName + ', Status = ' + @Status + '? Type YES to confirm:';
+    
+    -- Simulate user input (Replace this line with actual input in practice)
+    SET @UserInput = (SELECT 'YES'); -- Replace with actual input method
+
+    IF UPPER(@UserInput) = 'YES'
+    BEGIN
+        PRINT 'Killing SPID: ' + CAST(@SPID AS NVARCHAR(10));
+        DECLARE @KillCommand NVARCHAR(50);
+        SET @KillCommand = 'KILL ' + CAST(@SPID AS NVARCHAR(10));
+        EXEC sp_executesql @KillCommand;
+
+        -- Log the killed session
+        INSERT INTO @KilledSessions (spid, loginname, dbname, status, kill_time)
+        VALUES (@SPID, @LoginName, @DBName, @Status, GETDATE());
+    END
+    ELSE
+    BEGIN
+        PRINT 'Skipping SPID: ' + CAST(@SPID AS NVARCHAR(10));
+    END
+
+    FETCH NEXT FROM SessionCursor INTO @SPID, @LoginName, @DBName, @Status;
+END
+
+CLOSE SessionCursor;
+DEALLOCATE SessionCursor;
+
+-- Print a summary of killed sessions
+PRINT 'Summary of Killed Sessions:';
+SELECT * FROM @KilledSessions;
+
+PRINT 'Session processing completed.';
+SET NOCOUNT OFF
