@@ -1,0 +1,37 @@
+/*
+Use Case: you want to kill all connections from login A in Database DB specially incases when this logins caused outage. 
+*/
+
+Declare @SPID int 
+DECLARE @LOGINNAME VARCHAR(30) = 'accounting'
+DECLARE @DATABASENAME VARCHAR(30) = 'StackOverflow2013' 
+
+-- USE CURSOR 
+DECLARE KILLSESSIONCURSOR CURSOR FOR  
+SELECT s.session_id
+        FROM sys.dm_exec_sessions s
+        JOIN sys.dm_exec_requests r ON s.session_id = r.session_id
+        WHERE s.login_name = @LOGINNAME
+          AND DB_NAME(r.database_id) = @DATABASENAME
+
+OPEN KILLSESSIONCURSOR
+
+FETCH NEXT FROM KILLSESSIONCURSOR into @SPID
+WHILE @@FETCH_STATUS = 0
+
+BEGIN
+Print 'Kill ' + convert (varchar, @SPID) + ';'
+ FETCH NEXT FROM KILLSESSIONCURSOR INTO @SPID 
+ END
+CLOSE KILLSESSIONCURSOR;
+DEALLOCATE KILLSESSIONCURSOR;
+ 
+ PRINT '
+ -- TO DISABLE LOGIN ON THE DATABASE
+ -- ALTER LOGIN ' + @LOGINNAME + ' DISABLE;
+ 
+ -- TO ENABLE 
+  -- ALTER LOGIN ' + @LOGINNAME + ' ENABLE;'
+
+
+ 
