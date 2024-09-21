@@ -27,11 +27,11 @@ CLOSE KILLSESSIONCURSOR;
 DEALLOCATE KILLSESSIONCURSOR;
  
  PRINT '
- -- TO DISABLE LOGIN ON THE DATABASE
- -- ALTER LOGIN ' + @LOGINNAME + ' DISABLE;
+ -- TO Deny Connect to a LOGIN ON THE DATABASE
+ -- Use master; Deny Connect SQL TO ' + @LOGINNAME + ';
  
- -- TO ENABLE 
-  -- ALTER LOGIN ' + @LOGINNAME + ' ENABLE;'
+  -- TO Grant Connect to a LOGIN ON THE DATABASE
+  -- Use master; Grant Connect SQL TO ' + @LOGINNAME + ';'
 
-
+ 
  
